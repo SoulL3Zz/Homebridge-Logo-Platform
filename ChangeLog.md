@@ -1,3 +1,13 @@
+# 1.4.11 #
+
+## ModBus Stability ##
+
+Reduce ECONNRESET storms and disconnects by adding exponential backoff between
+Modbus retries (instead of a fixed 100 ms), and by destroying the raw socket on
+failed connections to avoid file descriptor leaks.</br>
+Also suppress transient network errors that surface as unhandled promise
+rejections (previously only uncaughtException was handled).</br>
+
 # 1.4.10 #
 
 ## ModBus Error Handling ##
