@@ -35,7 +35,8 @@ export class ModBusLogo {
     public retryCnt:    number;
 
     timeout:   number = 500; // original 100
-    sleeptime: number = 100; 
+    sleeptime: number = 100;
+    maxBackoff: number = 2000;
 
     constructor(
         ip:          string,
@@ -127,12 +128,33 @@ export class ModBusLogo {
         }
     }
 
+    // Exponential backoff between retries to avoid hammering the LOGO! with
+    // rapid reconnects (which causes ECONNRESET storms). Grows with each
+    // consumed retry and is capped at maxBackoff.
+    private backoff(retryCount: number): number {
+        const attempt = Math.max(0, this.retryCnt - retryCount);
+        return Math.min(this.sleeptime * Math.pow(2, attempt), this.maxBackoff);
+    }
+
+    private destroyClient(client: any): void {
+        try { client.close(() => { /* ignore */ }); } catch (e) { /* ignore */ }
+        // Make sure the raw socket is released so file descriptors don't leak
+        // when a connection was reset mid-operation.
+        try {
+            const sock = client && client._port && client._port._client;
+            if (sock && typeof sock.destroy === 'function') {
+                sock.destroy();
+            }
+        } catch (e) { /* ignore */ }
+    }
+
     private withConnection(
         client: any,
         debugLog: number,
         log: any,
         onReady: () => void,
-        onConnectFail: () => void
+        onConnectFail: () => void,
+        retryCount: number
     ): void {
         let failed = false;
         const fail = (reason: string) => {
@@ -141,8 +163,8 @@ export class ModBusLogo {
             if (debugLog == 1) {
                 log('ModBus connect failed: ' + reason);
             }
-            try { client.close(() => { /* ignore */ }); } catch (e) { /* ignore */ }
-            sleep(this.sleeptime).then(onConnectFail);
+            this.destroyClient(client);
+            sleep(this.backoff(retryCount)).then(onConnectFail);
         };
         try {
             client.connectTcpRTUBuffered(this.ip, { port: this.port }, (connectErr: any) => {
@@ -194,7 +216,7 @@ export class ModBusLogo {
                 client.readDiscreteInputs(addr.addr, len, (err: Error, data: ReadCoilResult) => {
                     if (err) {
                         this.logError(log, err, debugLog, retryCount);
-                        sleep(this.sleeptime).then(() => {
+                        sleep(this.backoff(retryCount)).then(() => {
                             this.readDiscreteInput(addr, callBack, debugLog, log, retryCount);
                         });
                     } else {
@@ -203,7 +225,8 @@ export class ModBusLogo {
                     client.close();
                 });
             },
-            () => this.readDiscreteInput(addr, callBack, debugLog, log, retryCount)
+            () => this.readDiscreteInput(addr, callBack, debugLog, log, retryCount),
+            retryCount
         );
     }
 
@@ -231,7 +254,7 @@ export class ModBusLogo {
                 client.readCoils(addr.addr, len, (err: Error, data: ReadCoilResult) => {
                     if (err) {
                         this.logError(log, err, debugLog, retryCount);
-                        sleep(this.sleeptime).then(() => {
+                        sleep(this.backoff(retryCount)).then(() => {
                             this.readCoil(addr, callBack, debugLog, log, retryCount);
                         });
                     } else {
@@ -240,7 +263,8 @@ export class ModBusLogo {
                     client.close();
                 });
             },
-            () => this.readCoil(addr, callBack, debugLog, log, retryCount)
+            () => this.readCoil(addr, callBack, debugLog, log, retryCount),
+            retryCount
         );
     }
 
@@ -268,7 +292,7 @@ export class ModBusLogo {
                 client.readInputRegisters(addr.addr, len, (err: Error, data: ReadRegisterResult) => {
                     if (err) {
                         this.logError(log, err, debugLog, retryCount);
-                        sleep(this.sleeptime).then(() => {
+                        sleep(this.backoff(retryCount)).then(() => {
                             this.readInputRegister(addr, callBack, debugLog, log, retryCount);
                         });
                     } else {
@@ -281,7 +305,8 @@ export class ModBusLogo {
                     client.close();
                 });
             },
-            () => this.readInputRegister(addr, callBack, debugLog, log, retryCount)
+            () => this.readInputRegister(addr, callBack, debugLog, log, retryCount),
+            retryCount
         );
     }
 
@@ -309,7 +334,7 @@ export class ModBusLogo {
                 client.readHoldingRegisters(addr.addr, len, (err: Error, data: ReadRegisterResult) => {
                     if (err) {
                         this.logError(log, err, debugLog, retryCount);
-                        sleep(this.sleeptime).then(() => {
+                        sleep(this.backoff(retryCount)).then(() => {
                             this.readHoldingRegister(addr, callBack, debugLog, log, retryCount);
                         });
                     } else {
@@ -344,7 +369,8 @@ export class ModBusLogo {
                     client.close();
                 });
             },
-            () => this.readHoldingRegister(addr, callBack, debugLog, log, retryCount)
+            () => this.readHoldingRegister(addr, callBack, debugLog, log, retryCount),
+            retryCount
         );
     }
 
@@ -370,14 +396,15 @@ export class ModBusLogo {
                 client.writeCoil(addr, state, (err: Error, data: WriteCoilResult) => {
                     if (err) {
                         this.logError(log, err, debugLog, retryCount);
-                        sleep(this.sleeptime).then(() => {
+                        sleep(this.backoff(retryCount)).then(() => {
                             this.writeCoil(addr, state, debugLog, log, retryCount);
                         });
                     }
                     client.close();
                 });
             },
-            () => this.writeCoil(addr, state, debugLog, log, retryCount)
+            () => this.writeCoil(addr, state, debugLog, log, retryCount),
+            retryCount
         );
 
     }
@@ -404,14 +431,15 @@ export class ModBusLogo {
                 client.writeRegister(addr, value, (err: Error, data: WriteRegisterResult) => {
                     if (err) {
                         this.logError(log, err, debugLog, retryCount);
-                        sleep(this.sleeptime).then(() => {
+                        sleep(this.backoff(retryCount)).then(() => {
                             this.writeRegister(addr, value, debugLog, log, retryCount);
                         });
                     }
                     client.close();
                 });
             },
-            () => this.writeRegister(addr, value, debugLog, log, retryCount)
+            () => this.writeRegister(addr, value, debugLog, log, retryCount),
+            retryCount
         );
     }
 
@@ -437,14 +465,15 @@ export class ModBusLogo {
                 client.writeRegisters(addr, value, (err: Error, data: WriteRegisterResult) => {
                     if (err) {
                         this.logError(log, err, debugLog, retryCount);
-                        sleep(this.sleeptime).then(() => {
+                        sleep(this.backoff(retryCount)).then(() => {
                             this.writeRegisters(addr, value, debugLog, log, retryCount);
                         });
                     }
                     client.close();
                 });
             },
-            () => this.writeRegisters(addr, value, debugLog, log, retryCount)
+            () => this.writeRegisters(addr, value, debugLog, log, retryCount),
+            retryCount
         );
     }
 

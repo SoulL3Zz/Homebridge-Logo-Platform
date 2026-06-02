@@ -90,12 +90,24 @@ export class LogoHomebridgePlatform implements StaticPlatformPlugin {
     // this.log.debug('Finished initializing platform:', this.config.name);
 
     const transientNetErrors = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH'];
+    const isTransientNetError = (err: any): boolean =>
+      !!(err && err.code && transientNetErrors.indexOf(err.code) !== -1);
+
     process.on('uncaughtException', (err: any) => {
-      if (err && err.code && transientNetErrors.indexOf(err.code) !== -1) {
+      if (isTransientNetError(err)) {
         this.log.warn('Suppressed transient network error: ' + err.code + ' - ' + err.message);
         return;
       }
       throw err;
+    });
+
+    process.on('unhandledRejection', (reason: any) => {
+      if (isTransientNetError(reason)) {
+        this.log.warn('Suppressed transient network rejection: ' + reason.code + ' - ' + reason.message);
+        return;
+      }
+      // Re-throw non-transient rejections so they remain visible / handled by Homebridge.
+      throw reason;
     });
 
     this.ip            =           this.config.ip;
